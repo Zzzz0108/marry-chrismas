@@ -20,13 +20,11 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
     const treeBaseRadius = 220;
     const treeTopY = -250;
     
-    // 0. Trunk (Solid Logic)
-    // Instead of a spiral, we create a central spine that we will render as thick blocks
+    // 0. Trunk
     const trunkHeight = 120;
     const trunkWidth = 50; 
-    const trunkStartY = treeTopY + treeHeight - 50; // Overlap slightly with bottom branches
+    const trunkStartY = treeTopY + treeHeight - 50;
     
-    // Create segments for the trunk
     const trunkSegments = 20;
     const segmentHeight = trunkHeight / trunkSegments;
 
@@ -37,21 +35,20 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
              y: y,
              z: 0,
              size: trunkWidth,
-             color: '#3e2723', // Darker solid wood color
+             color: '#3e2723',
              type: 'trunk',
              opacity: 1
          });
     }
 
-    // 1. Tree Foliage (Reduced Density)
-    const layers = 80; // Reduced from 120 for less clutter
+    // 1. Tree Foliage
+    const layers = 80;
     
     for (let i = 0; i < layers; i++) {
-      const progress = i / layers; // 0 (top) to 1 (bottom)
+      const progress = i / layers; 
       const y = treeTopY + (progress * treeHeight);
       
       const radius = treeBaseRadius * Math.pow(progress, 0.9);
-      // Significantly reduced particle count formula
       const particlesInLayer = 8 + Math.floor(progress * 30); 
 
       for (let j = 0; j < particlesInLayer; j++) {
@@ -70,20 +67,20 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
       }
     }
 
-    // 2. Lights (Spiral with varied sizes)
+    // 2. Lights
     const coils = 7;
     const pointsPerCoil = 35;
     for (let i = 0; i < coils * pointsPerCoil; i++) {
-      const p = i / (coils * pointsPerCoil); // 0 to 1
+      const p = i / (coils * pointsPerCoil); 
       const y = treeTopY + (p * treeHeight);
-      const radius = treeBaseRadius * p + 8; // Slightly outside foliage
+      const radius = treeBaseRadius * p + 8;
       const angle = p * Math.PI * 2 * coils;
 
       particles.push({
         x: Math.cos(angle) * radius,
         y: y,
         z: Math.sin(angle) * radius,
-        size: Math.random() > 0.7 ? Math.random() * 4 + 5 : Math.random() * 2 + 3, // Some big, some small
+        size: Math.random() > 0.7 ? Math.random() * 4 + 5 : Math.random() * 2 + 3,
         color: LIGHT_COLORS[i % LIGHT_COLORS.length],
         type: 'light',
         opacity: 1,
@@ -91,11 +88,11 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
       });
     }
 
-    // 3. Decorations (Ornaments & Extra Stars on tree)
-    for (let i = 0; i < 100; i++) {
+    // 3. Decorations (Ornaments)
+    for (let i = 0; i < 80; i++) {
         const p = Math.random();
         const y = treeTopY + (p * treeHeight);
-        const radius = treeBaseRadius * p * 0.9; // Embedded slightly
+        const radius = treeBaseRadius * p * 0.9;
         const angle = Math.random() * Math.PI * 2;
         
         const isStar = Math.random() > 0.7;
@@ -111,30 +108,58 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
         });
     }
 
-    // 4. Top Star (Significantly larger)
+    // 3.5 Ba Yin Qiao (Eight-Tone Orifices) - UPDATED
+    // Static, scattered, same size as gifts (28)
+    const numBaYinQiao = 18; // Increased count slightly for better scattering
+    for (let i = 0; i < numBaYinQiao; i++) {
+        // Random height: mostly middle to bottom, but some high up
+        const p = Math.random() * 0.85 + 0.1; 
+        const y = treeTopY + (p * treeHeight);
+        
+        // Base radius at this height
+        const baseLayerRadius = treeBaseRadius * Math.pow(p, 0.9);
+        
+        // Depth scattering: Some are buried slightly (0.8), some hang out (1.15)
+        const depthScale = 0.8 + Math.random() * 0.35; 
+        const radius = baseLayerRadius * depthScale;
+        
+        const angle = Math.random() * Math.PI * 2;
+
+        particles.push({
+            x: Math.cos(angle) * radius,
+            y: y,
+            z: Math.sin(angle) * radius,
+            size: 28, // Matches Gift Size
+            color: '#e0e7ff', 
+            type: 'bayinqiao',
+            opacity: 1,
+            rotationPhase: Math.random() * Math.PI * 2 // Static orientation
+        });
+    }
+
+    // 4. Top Star
     particles.push({
       x: 0,
       y: treeTopY - 25,
       z: 0,
-      size: 45, // Much bigger
+      size: 45,
       color: STAR_COLOR,
       type: 'star',
       opacity: 1
     });
 
-    // 5. Gift Particles (Larger and positioned carefully)
+    // 5. Gifts
     GIFTS.forEach((gift, index) => {
-      // Position gifts in a nice spiral on the lower half
-      const p = 0.6 + (index / GIFTS.length) * 0.35; // 0.6 to 0.95 height
+      const p = 0.6 + (index / GIFTS.length) * 0.35;
       const y = treeTopY + (p * treeHeight);
-      const radius = treeBaseRadius * p + 40; // Stick out well for clicking
+      const radius = treeBaseRadius * p + 40;
       const angle = (index / GIFTS.length) * Math.PI * 2; 
 
       particles.push({
         x: Math.cos(angle) * radius,
         y: y,
         z: Math.sin(angle) * radius,
-        size: 30, // Much larger for interaction
+        size: 28, // Updated to match Ba Yin Qiao
         color: gift.color,
         type: 'gift',
         giftId: gift.id,
@@ -143,7 +168,7 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
       });
     });
 
-    // 6. Snow Particles (More dense)
+    // 6. Snow
     for (let i = 0; i < 400; i++) {
       particles.push({
         x: (Math.random() - 0.5) * 1200,
@@ -169,13 +194,12 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
     let rz = p.x * sin + p.z * cos;
     let ry = p.y;
 
-    // Perspective Projection
     const fov = 800;
     const viewerDistance = 1100;
     const scale = fov / (fov + viewerDistance + rz);
 
     const x2d = rx * scale + width / 2;
-    const y2d = ry * scale + height / 2; // Centered vertically
+    const y2d = ry * scale + height / 2;
 
     return {
       x: x2d,
@@ -183,6 +207,112 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
       scale: scale,
       visible: scale > 0
     };
+  };
+
+  // Helper to draw the "Ba Yin Qiao" (Eight-Tone Orifice)
+  const drawBaYinQiao = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, _time: number, phase: number) => {
+      // 1. Clip to Sphere shape
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.clip();
+
+      // 2. Base Material Gradient (Pearlescent / Jade)
+      // Complex gradient: White highlight -> Pale Blue -> Lavender -> Deep Purple/Grey edge
+      const grad = ctx.createRadialGradient(x - size*0.3, y - size*0.3, size*0.1, x, y, size * 1.2);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.98)'); 
+      grad.addColorStop(0.3, 'rgba(210, 230, 255, 0.95)'); 
+      grad.addColorStop(0.6, 'rgba(160, 140, 240, 0.9)'); 
+      grad.addColorStop(1, 'rgba(80, 70, 150, 0.95)'); 
+      
+      ctx.fillStyle = grad;
+      ctx.fillRect(x - size, y - size, size * 2, size * 2);
+
+      // 3. 3D Holes Simulation (STATIC)
+      // Define points on a unit sphere (corners + centers)
+      const points = [
+          {x: 0, y: 0, z: 1}, {x: 0, y: 0, z: -1},
+          {x: 1, y: 0, z: 0}, {x: -1, y: 0, z: 0},
+          {x: 0, y: 1, z: 0}, {x: 0, y: -1, z: 0},
+          {x: 0.7, y: 0.7, z: 0.7}, {x: -0.7, y: -0.7, z: -0.7}
+      ];
+
+      // Use phase for STATIC orientation. No time dependency.
+      // This ensures each orb looks different but doesn't spin.
+      const t = phase; 
+      const cosT = Math.cos(t);
+      const sinT = Math.sin(t);
+      const cosT2 = Math.cos(t * 0.7);
+      const sinT2 = Math.sin(t * 0.7);
+
+      points.forEach(p => {
+          // Rotate Y
+          let px = p.x * cosT - p.z * sinT;
+          let pz = p.x * sinT + p.z * cosT;
+          let py = p.y;
+          
+          // Rotate X
+          let py2 = py * cosT2 - pz * sinT2;
+          let pz2 = py * sinT2 + pz * cosT2;
+          let px2 = px;
+
+          // Projection scale for "depth" inside the orb
+          const scale = 1 / (1 - pz2 * 0.3);
+          const drawX = x + px2 * size * 0.7;
+          const drawY = y + py2 * size * 0.7;
+          const holeRad = size * 0.25 * scale;
+
+          if (pz2 > 0) {
+              // Front holes: Dark inside, sharp rim
+              ctx.beginPath();
+              ctx.ellipse(drawX, drawY, holeRad, holeRad * 0.85, 0, 0, Math.PI * 2);
+              ctx.fillStyle = 'rgba(20, 15, 60, 0.85)'; // Deep hollow
+              ctx.fill();
+
+              // Rim
+              ctx.lineWidth = 1.5;
+              ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+              ctx.stroke();
+          } else {
+             // Back holes: Faint, ghostly (adds translucency)
+              ctx.beginPath();
+              ctx.ellipse(drawX, drawY, holeRad * 0.9, holeRad * 0.7, 0, 0, Math.PI * 2);
+              ctx.fillStyle = 'rgba(10, 5, 40, 0.15)'; 
+              ctx.fill();
+          }
+      });
+
+      // 4. Surface Cloud Patterns (Swirls)
+      // Fixed overlay to simulate carving texture
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x - size*0.6, y + size*0.4);
+      ctx.bezierCurveTo(x - size*0.3, y - size*0.2, x + size*0.3, y + size*0.2, x + size*0.6, y - size*0.4);
+      ctx.stroke();
+      
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, size * 0.85, 0, Math.PI * 2); // Inner rim suggestion
+      ctx.stroke();
+
+      ctx.restore(); // End Clip
+
+      // 5. Outer Glow (Bloom)
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = 'rgba(180, 200, 255, 0.6)';
+      ctx.fillStyle = 'transparent';
+      ctx.beginPath();
+      ctx.arc(x, y, size * 0.95, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // 6. Specular Highlight (Glassy Finish)
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.beginPath();
+      ctx.ellipse(x - size*0.35, y - size*0.35, size * 0.2, size * 0.12, Math.PI / 4, 0, Math.PI * 2);
+      ctx.fill();
   };
 
   // Animation Loop
@@ -220,16 +350,10 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
         ctx.globalAlpha = p.opacity;
         
         if (p.type === 'trunk') {
-            // Solid trunk rendering
-            // Draw a rectangle instead of a circle
             const width = p.size * proj.scale;
-            const height = 10 * proj.scale; // Overlap segments
-            
+            const height = 10 * proj.scale; 
             ctx.fillStyle = p.color;
-            // Draw main wood block
             ctx.fillRect(proj.x - width/2, proj.y, width, height);
-            
-            // Add a simple shadow on one side to mimic 3D cylinder
             ctx.fillStyle = 'rgba(0,0,0,0.3)';
             ctx.fillRect(proj.x + width/6, proj.y, width/3, height);
         }
@@ -241,9 +365,7 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
         } 
         else if (p.type === 'light') {
             const blink = Math.sin(time * 4 + (p.blinkOffset || 0));
-            // Make lights pulse instead of disappear completely
             const alpha = 0.5 + 0.5 * Math.abs(blink);
-            
             ctx.shadowBlur = 15 * alpha;
             ctx.shadowColor = p.color;
             ctx.globalAlpha = alpha;
@@ -259,19 +381,20 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
             ctx.beginPath();
             ctx.arc(proj.x, proj.y, p.size * proj.scale, 0, Math.PI * 2);
             ctx.fill();
-            // Highlight
             ctx.fillStyle = 'rgba(255,255,255,0.6)';
             ctx.beginPath();
             ctx.arc(proj.x - p.size*0.3*proj.scale, proj.y - p.size*0.3*proj.scale, p.size * 0.3 * proj.scale, 0, Math.PI * 2);
             ctx.fill();
         }
+        else if (p.type === 'bayinqiao') {
+            // Draw enhanced Ba Yin Qiao asset (Static)
+            drawBaYinQiao(ctx, proj.x, proj.y, p.size * proj.scale, time, p.rotationPhase || 0);
+        }
         else if (p.type === 'star') {
-          // Complex Glowing Star Top (Simplified per request)
           const pulse = 1 + Math.sin(time * 3) * 0.1;
           const outerRadius = p.size * proj.scale * pulse;
           const innerRadius = outerRadius * 0.4;
           
-          // Glow Back
           ctx.shadowBlur = 50;
           ctx.shadowColor = '#ffff00';
           ctx.fillStyle = 'rgba(255, 220, 100, 0.2)';
@@ -279,76 +402,57 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
           ctx.arc(proj.x, proj.y, outerRadius * 1.5, 0, Math.PI * 2);
           ctx.fill();
 
-          // Main Star
           ctx.shadowBlur = 20;
           ctx.fillStyle = STAR_COLOR;
           
-          const drawStar = (radOuter: number, radInner: number, rotation: number) => {
-             const spikes = 5;
-             let rot = rotation;
-             let cx = proj.x;
-             let cy = proj.y;
-             let step = Math.PI / spikes;
+          const spikes = 5;
+          let rot = Math.PI / 2 * 3;
+          let cx = proj.x;
+          let cy = proj.y;
+          let step = Math.PI / spikes;
 
-             ctx.beginPath();
-             ctx.moveTo(cx, cy - radOuter);
-             for (let i = 0; i < spikes; i++) {
-                cx = proj.x + Math.cos(rot) * radOuter;
-                cy = proj.y + Math.sin(rot) * radOuter;
-                ctx.lineTo(cx, cy);
-                rot += step;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy - outerRadius);
+          for (let i = 0; i < spikes; i++) {
+            cx = proj.x + Math.cos(rot) * outerRadius;
+            cy = proj.y + Math.sin(rot) * outerRadius;
+            ctx.lineTo(cx, cy);
+            rot += step;
 
-                cx = proj.x + Math.cos(rot) * radInner;
-                cy = proj.y + Math.sin(rot) * radInner;
-                ctx.lineTo(cx, cy);
-                rot += step;
-             }
-             ctx.lineTo(proj.x, proj.y - radOuter);
-             ctx.closePath();
-             ctx.fill();
-          };
-
-          // Draw main star (upright)
-          drawStar(outerRadius, innerRadius, Math.PI / 2 * 3);
-          // Removed inner white rotating star
+            cx = proj.x + Math.cos(rot) * innerRadius;
+            cy = proj.y + Math.sin(rot) * innerRadius;
+            ctx.lineTo(cx, cy);
+            rot += step;
+          }
+          ctx.lineTo(proj.x, proj.y - outerRadius);
+          ctx.closePath();
+          ctx.fill();
           
           ctx.shadowBlur = 0;
         }
         else if (p.type === 'gift') {
-          // Large Gift Box
           const size = p.size * proj.scale;
           const halfSize = size / 2;
-          
-          // Bobbing animation
           const bob = Math.sin(time * 2 + (p.angleOffset || 0)) * 5 * proj.scale;
           const yPos = proj.y + bob;
 
           ctx.shadowBlur = 10;
           ctx.shadowColor = 'rgba(0,0,0,0.5)';
-          
-          // Box Base
           ctx.fillStyle = p.color;
-          // Simple 3D extrusion effect
-          // Front face
           ctx.fillRect(proj.x - halfSize, yPos - halfSize, size, size);
           
-          // Lid/Side shadow slightly darker
           ctx.fillStyle = 'rgba(0,0,0,0.1)';
           ctx.fillRect(proj.x - halfSize, yPos + halfSize - size * 0.1, size, size * 0.1);
 
-          // Ribbons
           ctx.fillStyle = '#ffffff';
           const ribbonWidth = size * 0.25;
           ctx.fillRect(proj.x - ribbonWidth/2, yPos - halfSize, ribbonWidth, size);
           ctx.fillRect(proj.x - halfSize, yPos - ribbonWidth/2, size, ribbonWidth);
           
-          // Big Bow
           ctx.shadowBlur = 5;
           ctx.shadowColor = '#ffffff';
           ctx.beginPath();
-          // Left loop
           ctx.ellipse(proj.x - ribbonWidth, yPos - halfSize, ribbonWidth, ribbonWidth*0.8, -0.5, 0, Math.PI * 2);
-          // Right loop
           ctx.ellipse(proj.x + ribbonWidth, yPos - halfSize, ribbonWidth, ribbonWidth*0.8, 0.5, 0, Math.PI * 2);
           ctx.fill();
 
@@ -380,23 +484,20 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
     const time = Date.now() * 0.001;
     const currentRotation = time * 0.25;
 
-    // Iterate front-to-back logic for correct click handling
     for (let i = particlesRef.current.length - 1; i >= 0; i--) {
       const p = particlesRef.current[i];
+      
+      // Check for Gift clicks
       if (p.type === 'gift' && p.giftId) {
         const proj = project(p, canvas.width, canvas.height, currentRotation);
-        
-        // Bob calculation needs to match render for accurate click
         const bob = Math.sin(time * 2 + (p.angleOffset || 0)) * 5 * proj.scale;
         const yPos = proj.y + bob;
-
         const size = p.size * proj.scale;
-        const hitRadius = size * 0.8; // Box size roughly
+        const hitRadius = size * 0.8;
         
         const dx = clickX - proj.x;
         const dy = clickY - yPos;
         
-        // Simple box collision approximation
         if (Math.abs(dx) < hitRadius && Math.abs(dy) < hitRadius) {
           const gift = GIFTS.find(g => g.id === p.giftId);
           if (gift) {
@@ -404,6 +505,18 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
             return; 
           }
         }
+      }
+      
+      // Check for Ba Yin Qiao clicks
+      if (p.type === 'bayinqiao') {
+          const proj = project(p, canvas.width, canvas.height, currentRotation);
+          const size = p.size * proj.scale;
+          const dx = clickX - proj.x;
+          const dy = clickY - proj.y;
+          // Simple visual feedback for now in console
+          if (dx*dx + dy*dy < size*size) {
+              console.log("Touched Ba Yin Qiao");
+          }
       }
     }
   };

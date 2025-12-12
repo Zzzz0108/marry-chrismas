@@ -1,3 +1,4 @@
+
 export interface GiftMessage {
   id: string;
   to: string;
@@ -14,13 +15,14 @@ export interface Point3D {
 export interface Particle extends Point3D {
   size: number;
   color: string;
-  type: 'tree' | 'trunk' | 'snow' | 'gift' | 'star' | 'light' | 'ornament';
+  type: 'tree' | 'trunk' | 'snow' | 'gift' | 'star' | 'light' | 'ornament' | 'bayinqiao';
   giftId?: string; // Only for gift particles
   originalY?: number; // For tree spiral calculation
   angleOffset?: number; // For tree spiral calculation
   speed?: number; // For snow
   opacity: number;
   blinkOffset?: number; // For lights
+  rotationPhase?: number; // For bayinqiao rotation
 }
 
 export interface ProjectedPoint {
