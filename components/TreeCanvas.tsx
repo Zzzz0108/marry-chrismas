@@ -1,10 +1,10 @@
 import React, { useRef, useMemo, useState } from 'react';
-import { Canvas, useFrame, extend } from '@react-three/fiber';
+import { Canvas, useFrame, extend, Object3DNode } from '@react-three/fiber';
 import { OrbitControls, Environment, Sparkles, shaderMaterial, useCursor, Float } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { GIFTS, GOLD_COLOR, LIGHT_COLORS, TREE_COLOR_BASE, TREE_COLOR_TIP, SNOW_COLOR } from '../constants';
-import { GiftMessage } from '../types';
+import { GiftMessage, TreeSceneProps } from '../types';
 
 // --- Custom Shader for Foliage ---
 const FoliageMaterial = shaderMaterial(
@@ -141,12 +141,13 @@ const SnowflakeMaterial = shaderMaterial(
 );
 
 // --- Custom Shader for The Eight-Tone Aperture (Ba Yin Qiao) ---
-// White Jade with Cloud Patterns and Evenly Distributed Holes
+// Jade-like Light Purple with Cloud Veins, Iridescence, and 8 Circular Holes with Ring Decor
 const OrbMaterial = shaderMaterial(
     {
         uTime: 0,
-        uColorBase: new THREE.Color('#F0F8FF'), // Alice Blue / White Jade
-        uColorIridescent: new THREE.Color('#E6E6FA'), // Lavender mist
+        uColorBase: new THREE.Color('#E6D8F5'), // Light Purple / Lavender Jade
+        uColorClouds: new THREE.Color('#FFFFFF'), // Cloud color
+        uColorRing: new THREE.Color('#FFD700'), // Gold Ring color
     },
     // Vertex
     `
@@ -155,7 +156,8 @@ const OrbMaterial = shaderMaterial(
     varying vec3 vViewDir;
     
     void main() {
-        vPos = position;
+        // Pass local position for procedural texture
+        vPos = position; 
         vNormal = normalize(normalMatrix * normal);
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         vViewDir = normalize(-mvPosition.xyz);
@@ -167,49 +169,89 @@ const OrbMaterial = shaderMaterial(
     precision highp float;
     uniform float uTime;
     uniform vec3 uColorBase;
-    uniform vec3 uColorIridescent;
+    uniform vec3 uColorClouds;
+    uniform vec3 uColorRing;
     varying vec3 vNormal;
     varying vec3 vPos;
     varying vec3 vViewDir;
 
-    void main() {
-        // --- 1. Evenly Distributed Holes (Apertures) ---
-        // Scale factor controls number of holes
-        vec3 p = vPos * 3.5; 
-        // Classic Gyroid approximation for organic but regular holes
-        float gyroid = sin(p.x)*cos(p.y) + sin(p.y)*cos(p.z) + sin(p.z)*cos(p.x);
-        
-        // Threshold defines hole size. 
-        if (gyroid > 0.45) discard;
+    // Simple noise function
+    float hash(float n) { return fract(sin(n) * 43758.5453123); }
+    float noise(vec3 x) {
+        vec3 p = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);
+        float n = p.x + p.y * 57.0 + 113.0 * p.z;
+        return mix(mix(mix(hash(n + 0.0), hash(n + 1.0), f.x),
+                       mix(hash(n + 57.0), hash(n + 58.0), f.x), f.y),
+                   mix(mix(hash(n + 113.0), hash(n + 114.0), f.x),
+                       mix(hash(n + 170.0), hash(n + 171.0), f.x), f.y), f.z);
+    }
 
-        // --- 2. Cloud Patterns (Yun Wen) ---
-        // Create a swirling pattern on the surface using sine wave interference
-        float pattern = sin(vPos.x * 6.0 + uTime * 0.2) * sin(vPos.y * 6.0 - uTime * 0.1) * sin(vPos.z * 6.0);
+    void main() {
+        vec3 nPos = normalize(vPos);
+
+        // --- 1. Holes (Cube Corners) ---
+        vec3 cornerDir = normalize(sign(nPos)); 
+        float dotToCorner = dot(nPos, cornerDir); 
+        float holeThreshold = 0.955;
         
-        // --- 3. Lighting & Jade Texture ---
+        if (dotToCorner > holeThreshold) discard;
+
+        // --- 2. Ring Line (Decoration at edge) ---
+        // Draw a line slightly inside the hole edge
+        float distToEdge = holeThreshold - dotToCorner;
+        float linePos = 0.015; // Distance from physical hole edge
+        float lineThickness = 0.003; 
+        // 1.0 where the line is, 0.0 elsewhere
+        float ring = 1.0 - smoothstep(0.0, lineThickness, abs(distToEdge - linePos));
+
+        // --- 3. Cloud Curves (Xiangyun Veins) ---
+        // Use distorted noise to create curves
+        vec3 p = vPos * 3.5;
+        // Warp coordinates for swirly cloud feel
+        vec3 q = p + vec3(
+            noise(p + vec3(uTime * 0.05, 0.0, 0.0)),
+            noise(p + vec3(0.0, uTime * 0.05, 0.0)),
+            0.0
+        );
+        float n = noise(q);
+        
+        // Create veins/lines where noise value is close to 0.5
+        float veins = 1.0 - smoothstep(0.0, 0.08, abs(n - 0.5));
+        
+        // Mask veins so they don't interfere with the ring area too much (optional, but cleaner)
+        // Let's allow them everywhere as "auspicious clouds" usually cover the surface.
+
+        // --- 4. Lighting & Color Mixing ---
         vec3 normal = normalize(vNormal);
         vec3 viewDir = normalize(vViewDir);
         vec3 lightDir = normalize(vec3(0.5, 1.0, 0.5));
         
-        // Diffuse
+        // Base Jade Color
+        vec3 finalColor = uColorBase;
+        
+        // Add Cloud Veins
+        finalColor = mix(finalColor, uColorClouds, veins * 0.5);
+        
+        // Add Gold Ring Line (Additively or mix)
+        finalColor = mix(finalColor, uColorRing, ring * 0.9);
+
+        // Lighting
         float diff = max(dot(normal, lightDir), 0.0);
         
-        // Specular (Glossy Jade)
+        // High gloss specularity for jade
         vec3 halfVec = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(normal, halfVec), 0.0), 64.0);
+        float spec = pow(max(dot(normal, halfVec), 0.0), 50.0);
         
-        // Fresnel (Pearlescent rim)
+        // Fresnel glow
         float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
         
-        // Combine colors
-        // Base white jade color mixed slightly with cloud pattern for relief look
-        vec3 albedo = mix(uColorBase, vec3(1.0, 1.0, 1.0), pattern * 0.2);
+        // Iridescence
+        vec3 irid = 0.5 + 0.5 * cos(vec3(0.0, 2.0, 4.0) + fresnel * 4.0 + uTime);
         
-        // Add iridescent sheen (purple/pinkish) based on fresnel and pattern
-        vec3 sheen = mix(vec3(0.0), vec3(0.8, 0.6, 1.0), fresnel * 0.8);
-        
-        // Final Composition
-        vec3 finalColor = albedo * (diff * 0.6 + 0.4) + spec * 0.5 + sheen;
+        // Combine lighting
+        finalColor = finalColor * (diff * 0.6 + 0.5) + spec * 0.6 + irid * fresnel * 0.3;
         
         gl_FragColor = vec4(finalColor, 1.0);
     }
@@ -268,7 +310,6 @@ const Foliage = ({ isExploded }: { isExploded: boolean }) => {
         <bufferAttribute attach="attributes-position" count={positions.length / 3} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-aChaosPos" count={chaosPositions.length / 3} array={chaosPositions} itemSize={3} />
       </bufferGeometry>
-      {/* @ts-ignore */}
       <foliageMaterial 
         ref={materialRef} 
         transparent 
@@ -315,7 +356,6 @@ const Snow = () => {
             <bufferGeometry>
                 <bufferAttribute attach="attributes-position" count={positions.length / 3} array={positions} itemSize={3} />
             </bufferGeometry>
-            {/* @ts-ignore */}
             <snowflakeMaterial 
                 ref={materialRef}
                 transparent 
@@ -327,7 +367,6 @@ const Snow = () => {
 }
 
 // Mystical Orb Component (Ba Yin Qiao)
-// Updated to feature White Jade outer shell + Purple Inner Core
 const MysticalOrb = ({ position, scale = 1, speed = 1 }: { position: THREE.Vector3, scale?: number, speed?: number }) => {
     const ref = useRef<THREE.Group>(null);
     const materialRef = useRef<THREE.ShaderMaterial>(null);
@@ -347,29 +386,29 @@ const MysticalOrb = ({ position, scale = 1, speed = 1 }: { position: THREE.Vecto
 
     return (
         <group ref={ref} position={position} scale={scale}>
-            {/* Outer Shell: White Jade with Cloud Patterns & Holes */}
+            {/* Outer Shell: Jade with Cloud Patterns & Holes */}
             <mesh>
                 <sphereGeometry args={[1, 64, 64]} />
-                {/* @ts-ignore */}
                 <orbMaterial 
                     ref={materialRef} 
                     side={THREE.DoubleSide} 
                 />
             </mesh>
             
-            {/* Inner Core: Solid Purple Sphere */}
-            <mesh scale={0.7}>
+            {/* Inner Core: Solid Purple Sphere - Moved closer to outer shell */}
+            {/* Scale increased to 0.88 to be closer to the outer shell (radius 1.0) */}
+            <mesh scale={0.88}>
                 <sphereGeometry args={[1, 32, 32]} />
                 <meshStandardMaterial 
                     color="#6d28d9" 
                     emissive="#4c1d95"
-                    emissiveIntensity={1.5}
+                    emissiveIntensity={2}
                     roughness={0.4}
-                    metalness={0.5}
+                    metalness={0.8}
                 />
             </mesh>
             {/* Core Lights to make it glow from inside */}
-            <pointLight color="#a855f7" intensity={1} distance={2.5} decay={2} />
+            <pointLight color="#a855f7" intensity={2} distance={3} decay={2} />
         </group>
     );
 };
@@ -604,12 +643,7 @@ const StarTopper = ({ isExploded }: { isExploded: boolean }) => {
 }
 
 // --- Main Scene ---
-interface TreeCanvasProps {
-  onGiftClick: (gift: GiftMessage) => void;
-  isExploded: boolean;
-}
-
-const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick, isExploded }) => {
+const TreeCanvas: React.FC<TreeSceneProps> = ({ onGiftClick, isExploded }) => {
   return (
     <Canvas
       dpr={[1, 2]}
@@ -632,7 +666,6 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick, isExploded }) => {
         <Foliage isExploded={isExploded} />
         <Ornaments isExploded={isExploded} />
         <StarTopper isExploded={isExploded} />
-        {/* Removed WindingKey */}
         
         {GIFTS.map((gift, i) => (
             <InteractiveGift 
@@ -668,3 +701,11 @@ const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick, isExploded }) => {
 };
 
 export default TreeCanvas;
+
+declare module '@react-three/fiber' {
+  interface ThreeElements {
+    foliageMaterial: Object3DNode<THREE.ShaderMaterial, typeof FoliageMaterial>;
+    snowflakeMaterial: Object3DNode<THREE.ShaderMaterial, typeof SnowflakeMaterial>;
+    orbMaterial: Object3DNode<THREE.ShaderMaterial, typeof OrbMaterial>;
+  }
+}

@@ -42,6 +42,11 @@ declare global {
       spotLight: any;
       color: any;
       planeGeometry: any;
+      
+      // Custom Shader Materials
+      foliageMaterial: any;
+      snowflakeMaterial: any;
+      orbMaterial: any;
     }
   }
 }

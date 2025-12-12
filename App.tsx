@@ -47,7 +47,7 @@ const App: React.FC = () => {
         >
             <div className="flex items-center gap-3 text-yellow-500 mb-2">
                 <Sparkles size={16} />
-                <span className="uppercase tracking-[0.3em] text-[10px] md:text-xs font-bold font-sans">The Grand Edition</span>
+                <span className="uppercase tracking-[0.3em] text-[10px] md:text-xs font-bold font-sans">made by watermelon emperor</span>
                 <Sparkles size={16} />
             </div>
             
