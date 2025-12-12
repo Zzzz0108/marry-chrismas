@@ -1,554 +1,669 @@
-import React, { useRef, useEffect, useCallback } from 'react';
-import { Particle, ProjectedPoint, GiftMessage } from '../types';
-import { GIFTS, TREE_COLORS, SNOW_COLOR, STAR_COLOR, LIGHT_COLORS } from '../constants';
+import React, { useRef, useMemo, useState } from 'react';
+import { Canvas, useFrame, extend } from '@react-three/fiber';
+import { OrbitControls, Environment, Sparkles, shaderMaterial, useCursor, Float } from '@react-three/drei';
+import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
+import * as THREE from 'three';
+import { GIFTS, GOLD_COLOR, LIGHT_COLORS, TREE_COLOR_BASE, TREE_COLOR_TIP, SNOW_COLOR } from '../constants';
+import { GiftMessage } from '../types';
 
-interface TreeCanvasProps {
-  onGiftClick: (gift: GiftMessage) => void;
-}
+// --- Custom Shader for Foliage ---
+const FoliageMaterial = shaderMaterial(
+  {
+    uTime: 0,
+    uMix: 0, // 0 = Chaos, 1 = Formed
+    uColorBase: new THREE.Color(TREE_COLOR_BASE),
+    uColorTip: new THREE.Color(TREE_COLOR_TIP),
+    uSize: 6.0,
+  },
+  // Vertex Shader
+  `
+    attribute vec3 aChaosPos;
+    varying float vMix;
+    varying float vHeight;
+    varying float vRand;
+    uniform float uMix;
+    uniform float uTime;
+    uniform float uSize;
 
-const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const requestRef = useRef<number>(0);
-  const particlesRef = useRef<Particle[]>([]);
-  
-  // Initialize Particles
-  const initParticles = useCallback(() => {
-    const particles: Particle[] = [];
-
-    // Tree Dimensions
-    const treeHeight = 500;
-    const treeBaseRadius = 220;
-    const treeTopY = -250;
-    
-    // 0. Trunk
-    const trunkHeight = 120;
-    const trunkWidth = 50; 
-    const trunkStartY = treeTopY + treeHeight - 50;
-    
-    const trunkSegments = 20;
-    const segmentHeight = trunkHeight / trunkSegments;
-
-    for (let i = 0; i < trunkSegments; i++) {
-         const y = trunkStartY + (i * segmentHeight);
-         particles.push({
-             x: 0,
-             y: y,
-             z: 0,
-             size: trunkWidth,
-             color: '#3e2723',
-             type: 'trunk',
-             opacity: 1
-         });
-    }
-
-    // 1. Tree Foliage
-    const layers = 80;
-    
-    for (let i = 0; i < layers; i++) {
-      const progress = i / layers; 
-      const y = treeTopY + (progress * treeHeight);
+    void main() {
+      vMix = uMix;
+      vRand = fract(sin(dot(aChaosPos.xy, vec2(12.9898, 78.233))) * 43758.5453);
       
-      const radius = treeBaseRadius * Math.pow(progress, 0.9);
-      const particlesInLayer = 8 + Math.floor(progress * 30); 
-
-      for (let j = 0; j < particlesInLayer; j++) {
-        const angle = (Math.PI * 2 * j) / particlesInLayer + Math.random() * 0.5;
-        const r = radius * (0.85 + Math.random() * 0.3);
-
-        particles.push({
-          x: Math.cos(angle) * r,
-          y: y + (Math.random() - 0.5) * 12,
-          z: Math.sin(angle) * r,
-          size: Math.random() * 4 + 2,
-          color: TREE_COLORS[Math.floor(Math.random() * TREE_COLORS.length)],
-          type: 'tree',
-          opacity: 0.9 + Math.random() * 0.1
-        });
+      // Cubic easing for smoother transition
+      float t = uMix;
+      float ease = t * t * (3.0 - 2.0 * t);
+      
+      vec3 pos = mix(aChaosPos, position, ease);
+      
+      // Gentle wind effect
+      if (ease > 0.8) {
+        float wind = sin(uTime * 1.0 + position.y * 0.5) * 0.1;
+        float windZ = cos(uTime * 0.8 + position.y * 0.3) * 0.1;
+        pos.x += wind;
+        pos.z += windZ;
       }
+
+      vHeight = pos.y; 
+
+      vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+      
+      // Size attenuation with safe z-divide
+      float zDist = max(1.0, -mvPosition.z); 
+      float size = uSize * (1.0 + sin(uTime * 2.0 + vRand * 10.0) * 0.3); 
+      gl_PointSize = size * (25.0 / zDist);
     }
+  `,
+  // Fragment Shader
+  `
+    uniform vec3 uColorBase;
+    uniform vec3 uColorTip;
+    uniform float uTime;
+    varying float vHeight;
+    varying float vRand;
 
-    // 2. Lights
-    const coils = 7;
-    const pointsPerCoil = 35;
-    for (let i = 0; i < coils * pointsPerCoil; i++) {
-      const p = i / (coils * pointsPerCoil); 
-      const y = treeTopY + (p * treeHeight);
-      const radius = treeBaseRadius * p + 8;
-      const angle = p * Math.PI * 2 * coils;
+    void main() {
+      vec2 center = gl_PointCoord - 0.5;
+      float dist = length(center);
+      if (dist > 0.5) discard;
 
-      particles.push({
-        x: Math.cos(angle) * radius,
-        y: y,
-        z: Math.sin(angle) * radius,
-        size: Math.random() > 0.7 ? Math.random() * 4 + 5 : Math.random() * 2 + 3,
-        color: LIGHT_COLORS[i % LIGHT_COLORS.length],
-        type: 'light',
-        opacity: 1,
-        blinkOffset: Math.random() * 100
-      });
+      // Soft Glow Particle
+      float strength = pow(1.0 - dist * 2.0, 2.5);
+      
+      // Gradient based on height
+      float h = smoothstep(-10.0, 10.0, vHeight);
+      vec3 baseColor = mix(uColorBase, uColorTip, h);
+      
+      // Magic Twinkle
+      float twinkleSpeed = 3.0;
+      float twinkle = sin(uTime * twinkleSpeed + vRand * 6.28);
+      float flash = step(0.8, twinkle);
+      
+      vec3 color = baseColor;
+      
+      // Gold highlights
+      if (flash > 0.5) {
+         color = mix(color, vec3(1.0, 0.9, 0.5), 0.8);
+         strength *= 1.5;
+      }
+
+      gl_FragColor = vec4(color, strength);
     }
+  `
+);
 
-    // 3. Decorations (Ornaments)
-    for (let i = 0; i < 80; i++) {
-        const p = Math.random();
-        const y = treeTopY + (p * treeHeight);
-        const radius = treeBaseRadius * p * 0.9;
-        const angle = Math.random() * Math.PI * 2;
-        
-        const isStar = Math.random() > 0.7;
-        
-        particles.push({
-            x: Math.cos(angle) * radius,
-            y: y,
-            z: Math.sin(angle) * radius,
-            size: isStar ? 4 : 6,
-            color: isStar ? '#ffffaa' : (Math.random() > 0.5 ? '#ef4444' : '#fbbf24'),
-            type: 'ornament',
-            opacity: 1
-        });
+// --- Custom Shader for Snowflakes ---
+const SnowflakeMaterial = shaderMaterial(
+  {
+    uTime: 0,
+    uColor: new THREE.Color(SNOW_COLOR),
+  },
+  // Vertex
+  `
+    varying vec2 vUv;
+    uniform float uTime;
+    void main() {
+      vUv = uv; 
+      vec3 pos = position;
+      
+      // Spiral fall
+      pos.x += sin(uTime * 0.5 + position.y * 0.2) * 2.0;
+      pos.z += cos(uTime * 0.5 + position.y * 0.2) * 2.0;
+      
+      vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+      float zDist = max(1.0, -mvPosition.z);
+      gl_PointSize = 300.0 / zDist; 
     }
-
-    // 3.5 Ba Yin Qiao (Eight-Tone Orifices) - UPDATED
-    // Static, scattered, same size as gifts (28)
-    const numBaYinQiao = 18; // Increased count slightly for better scattering
-    for (let i = 0; i < numBaYinQiao; i++) {
-        // Random height: mostly middle to bottom, but some high up
-        const p = Math.random() * 0.85 + 0.1; 
-        const y = treeTopY + (p * treeHeight);
-        
-        // Base radius at this height
-        const baseLayerRadius = treeBaseRadius * Math.pow(p, 0.9);
-        
-        // Depth scattering: Some are buried slightly (0.8), some hang out (1.15)
-        const depthScale = 0.8 + Math.random() * 0.35; 
-        const radius = baseLayerRadius * depthScale;
-        
-        const angle = Math.random() * Math.PI * 2;
-
-        particles.push({
-            x: Math.cos(angle) * radius,
-            y: y,
-            z: Math.sin(angle) * radius,
-            size: 28, // Matches Gift Size
-            color: '#e0e7ff', 
-            type: 'bayinqiao',
-            opacity: 1,
-            rotationPhase: Math.random() * Math.PI * 2 // Static orientation
-        });
+  `,
+  // Fragment
+  `
+    uniform vec3 uColor;
+    void main() {
+      vec2 uv = gl_PointCoord - 0.5;
+      float r = length(uv);
+      float a = atan(uv.y, uv.x);
+      
+      // 6-pointed star shape logic
+      float f = abs(cos(a * 3.0)); // 6 symmetry lobes
+      float shape = smoothstep(0.4, 0.0, r) * smoothstep(0.1, 0.3, f * r + 0.1);
+      
+      // Core glow
+      float core = 1.0 - smoothstep(0.0, 0.1, r);
+      
+      float alpha = shape + core * 0.5;
+      
+      if (alpha < 0.01) discard;
+      
+      gl_FragColor = vec4(uColor, alpha * 0.8);
     }
+  `
+);
 
-    // 4. Top Star
-    particles.push({
-      x: 0,
-      y: treeTopY - 25,
-      z: 0,
-      size: 45,
-      color: STAR_COLOR,
-      type: 'star',
-      opacity: 1
-    });
-
-    // 5. Gifts
-    GIFTS.forEach((gift, index) => {
-      const p = 0.6 + (index / GIFTS.length) * 0.35;
-      const y = treeTopY + (p * treeHeight);
-      const radius = treeBaseRadius * p + 40;
-      const angle = (index / GIFTS.length) * Math.PI * 2; 
-
-      particles.push({
-        x: Math.cos(angle) * radius,
-        y: y,
-        z: Math.sin(angle) * radius,
-        size: 28, // Updated to match Ba Yin Qiao
-        color: gift.color,
-        type: 'gift',
-        giftId: gift.id,
-        opacity: 1,
-        angleOffset: angle,
-      });
-    });
-
-    // 6. Snow
-    for (let i = 0; i < 400; i++) {
-      particles.push({
-        x: (Math.random() - 0.5) * 1200,
-        y: (Math.random() - 0.5) * 1200,
-        z: (Math.random() - 0.5) * 1200,
-        size: Math.random() * 2.5 + 1,
-        color: SNOW_COLOR,
-        type: 'snow',
-        speed: Math.random() * 2 + 1.5,
-        opacity: Math.random() * 0.5 + 0.3
-      });
+// --- Custom Shader for The Eight-Tone Aperture (Ba Yin Qiao) ---
+// White Jade with Cloud Patterns and Evenly Distributed Holes
+const OrbMaterial = shaderMaterial(
+    {
+        uTime: 0,
+        uColorBase: new THREE.Color('#F0F8FF'), // Alice Blue / White Jade
+        uColorIridescent: new THREE.Color('#E6E6FA'), // Lavender mist
+    },
+    // Vertex
+    `
+    varying vec3 vNormal;
+    varying vec3 vPos;
+    varying vec3 vViewDir;
+    
+    void main() {
+        vPos = position;
+        vNormal = normalize(normalMatrix * normal);
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        vViewDir = normalize(-mvPosition.xyz);
+        gl_Position = projectionMatrix * mvPosition;
     }
+    `,
+    // Fragment
+    `
+    precision highp float;
+    uniform float uTime;
+    uniform vec3 uColorBase;
+    uniform vec3 uColorIridescent;
+    varying vec3 vNormal;
+    varying vec3 vPos;
+    varying vec3 vViewDir;
 
-    particlesRef.current = particles;
+    void main() {
+        // --- 1. Evenly Distributed Holes (Apertures) ---
+        // Scale factor controls number of holes
+        vec3 p = vPos * 3.5; 
+        // Classic Gyroid approximation for organic but regular holes
+        float gyroid = sin(p.x)*cos(p.y) + sin(p.y)*cos(p.z) + sin(p.z)*cos(p.x);
+        
+        // Threshold defines hole size. 
+        if (gyroid > 0.45) discard;
+
+        // --- 2. Cloud Patterns (Yun Wen) ---
+        // Create a swirling pattern on the surface using sine wave interference
+        float pattern = sin(vPos.x * 6.0 + uTime * 0.2) * sin(vPos.y * 6.0 - uTime * 0.1) * sin(vPos.z * 6.0);
+        
+        // --- 3. Lighting & Jade Texture ---
+        vec3 normal = normalize(vNormal);
+        vec3 viewDir = normalize(vViewDir);
+        vec3 lightDir = normalize(vec3(0.5, 1.0, 0.5));
+        
+        // Diffuse
+        float diff = max(dot(normal, lightDir), 0.0);
+        
+        // Specular (Glossy Jade)
+        vec3 halfVec = normalize(lightDir + viewDir);
+        float spec = pow(max(dot(normal, halfVec), 0.0), 64.0);
+        
+        // Fresnel (Pearlescent rim)
+        float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+        
+        // Combine colors
+        // Base white jade color mixed slightly with cloud pattern for relief look
+        vec3 albedo = mix(uColorBase, vec3(1.0, 1.0, 1.0), pattern * 0.2);
+        
+        // Add iridescent sheen (purple/pinkish) based on fresnel and pattern
+        vec3 sheen = mix(vec3(0.0), vec3(0.8, 0.6, 1.0), fresnel * 0.8);
+        
+        // Final Composition
+        vec3 finalColor = albedo * (diff * 0.6 + 0.4) + spec * 0.5 + sheen;
+        
+        gl_FragColor = vec4(finalColor, 1.0);
+    }
+    `
+);
+
+extend({ FoliageMaterial, SnowflakeMaterial, OrbMaterial });
+
+// --- Components ---
+
+const Foliage = ({ isExploded }: { isExploded: boolean }) => {
+  const materialRef = useRef<THREE.ShaderMaterial>(null);
+  const count = 20000; 
+  
+  const { positions, chaosPositions } = useMemo(() => {
+    const pos = new Float32Array(count * 3);
+    const chaos = new Float32Array(count * 3);
+    
+    for (let i = 0; i < count; i++) {
+      const h = Math.random() * 20 - 10;
+      const hNorm = (h + 10) / 20; 
+      const rBase = (1 - hNorm) * 8.5;
+      const r = rBase * Math.sqrt(Math.random()); 
+      const theta = Math.random() * Math.PI * 2;
+      
+      pos[i * 3] = r * Math.cos(theta);
+      pos[i * 3 + 1] = h;
+      pos[i * 3 + 2] = r * Math.sin(theta);
+
+      const phi = Math.acos(2 * Math.random() - 1);
+      const thetaS = Math.random() * Math.PI * 2;
+      const radS = 40 + Math.random() * 20;
+      
+      chaos[i * 3] = radS * Math.sin(phi) * Math.cos(thetaS);
+      chaos[i * 3 + 1] = radS * Math.sin(phi) * Math.sin(thetaS);
+      chaos[i * 3 + 2] = radS * Math.cos(phi);
+    }
+    return { positions: pos, chaosPositions: chaos };
   }, []);
 
-  // Projection Logic
-  const project = (p: Particle, width: number, height: number, rotationY: number): ProjectedPoint => {
-    const cos = Math.cos(rotationY);
-    const sin = Math.sin(rotationY);
-    
-    let rx = p.x * cos - p.z * sin;
-    let rz = p.x * sin + p.z * cos;
-    let ry = p.y;
-
-    const fov = 800;
-    const viewerDistance = 1100;
-    const scale = fov / (fov + viewerDistance + rz);
-
-    const x2d = rx * scale + width / 2;
-    const y2d = ry * scale + height / 2;
-
-    return {
-      x: x2d,
-      y: y2d,
-      scale: scale,
-      visible: scale > 0
-    };
-  };
-
-  // Helper to draw the "Ba Yin Qiao" (Eight-Tone Orifice)
-  const drawBaYinQiao = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, _time: number, phase: number) => {
-      // 1. Clip to Sphere shape
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(x, y, size, 0, Math.PI * 2);
-      ctx.clip();
-
-      // 2. Base Material Gradient (Pearlescent / Jade)
-      // Complex gradient: White highlight -> Pale Blue -> Lavender -> Deep Purple/Grey edge
-      const grad = ctx.createRadialGradient(x - size*0.3, y - size*0.3, size*0.1, x, y, size * 1.2);
-      grad.addColorStop(0, 'rgba(255, 255, 255, 0.98)'); 
-      grad.addColorStop(0.3, 'rgba(210, 230, 255, 0.95)'); 
-      grad.addColorStop(0.6, 'rgba(160, 140, 240, 0.9)'); 
-      grad.addColorStop(1, 'rgba(80, 70, 150, 0.95)'); 
-      
-      ctx.fillStyle = grad;
-      ctx.fillRect(x - size, y - size, size * 2, size * 2);
-
-      // 3. 3D Holes Simulation (STATIC)
-      // Define points on a unit sphere (corners + centers)
-      const points = [
-          {x: 0, y: 0, z: 1}, {x: 0, y: 0, z: -1},
-          {x: 1, y: 0, z: 0}, {x: -1, y: 0, z: 0},
-          {x: 0, y: 1, z: 0}, {x: 0, y: -1, z: 0},
-          {x: 0.7, y: 0.7, z: 0.7}, {x: -0.7, y: -0.7, z: -0.7}
-      ];
-
-      // Use phase for STATIC orientation. No time dependency.
-      // This ensures each orb looks different but doesn't spin.
-      const t = phase; 
-      const cosT = Math.cos(t);
-      const sinT = Math.sin(t);
-      const cosT2 = Math.cos(t * 0.7);
-      const sinT2 = Math.sin(t * 0.7);
-
-      points.forEach(p => {
-          // Rotate Y
-          let px = p.x * cosT - p.z * sinT;
-          let pz = p.x * sinT + p.z * cosT;
-          let py = p.y;
-          
-          // Rotate X
-          let py2 = py * cosT2 - pz * sinT2;
-          let pz2 = py * sinT2 + pz * cosT2;
-          let px2 = px;
-
-          // Projection scale for "depth" inside the orb
-          const scale = 1 / (1 - pz2 * 0.3);
-          const drawX = x + px2 * size * 0.7;
-          const drawY = y + py2 * size * 0.7;
-          const holeRad = size * 0.25 * scale;
-
-          if (pz2 > 0) {
-              // Front holes: Dark inside, sharp rim
-              ctx.beginPath();
-              ctx.ellipse(drawX, drawY, holeRad, holeRad * 0.85, 0, 0, Math.PI * 2);
-              ctx.fillStyle = 'rgba(20, 15, 60, 0.85)'; // Deep hollow
-              ctx.fill();
-
-              // Rim
-              ctx.lineWidth = 1.5;
-              ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-              ctx.stroke();
-          } else {
-             // Back holes: Faint, ghostly (adds translucency)
-              ctx.beginPath();
-              ctx.ellipse(drawX, drawY, holeRad * 0.9, holeRad * 0.7, 0, 0, Math.PI * 2);
-              ctx.fillStyle = 'rgba(10, 5, 40, 0.15)'; 
-              ctx.fill();
-          }
-      });
-
-      // 4. Surface Cloud Patterns (Swirls)
-      // Fixed overlay to simulate carving texture
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-      ctx.lineWidth = 3;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(x - size*0.6, y + size*0.4);
-      ctx.bezierCurveTo(x - size*0.3, y - size*0.2, x + size*0.3, y + size*0.2, x + size*0.6, y - size*0.4);
-      ctx.stroke();
-      
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y, size * 0.85, 0, Math.PI * 2); // Inner rim suggestion
-      ctx.stroke();
-
-      ctx.restore(); // End Clip
-
-      // 5. Outer Glow (Bloom)
-      ctx.shadowBlur = 20;
-      ctx.shadowColor = 'rgba(180, 200, 255, 0.6)';
-      ctx.fillStyle = 'transparent';
-      ctx.beginPath();
-      ctx.arc(x, y, size * 0.95, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-
-      // 6. Specular Highlight (Glassy Finish)
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.beginPath();
-      ctx.ellipse(x - size*0.35, y - size*0.35, size * 0.2, size * 0.12, Math.PI / 4, 0, Math.PI * 2);
-      ctx.fill();
-  };
-
-  // Animation Loop
-  const animate = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    const time = Date.now() * 0.001;
-    const rotationSpeed = 0.25; 
-    const currentRotation = time * rotationSpeed;
-
-    // Update Snow Position
-    particlesRef.current.forEach(p => {
-      if (p.type === 'snow') {
-        p.y += p.speed || 1;
-        if (p.y > 600) p.y = -600; 
-      }
-    });
-
-    // Sort by depth
-    particlesRef.current.sort((a, b) => {
-      const az = a.x * Math.sin(currentRotation) + a.z * Math.cos(currentRotation);
-      const bz = b.x * Math.sin(currentRotation) + b.z * Math.cos(currentRotation);
-      return bz - az; 
-    });
-
-    particlesRef.current.forEach(p => {
-      const proj = project(p, canvas.width, canvas.height, currentRotation);
-
-      if (proj.visible) {
-        ctx.globalAlpha = p.opacity;
-        
-        if (p.type === 'trunk') {
-            const width = p.size * proj.scale;
-            const height = 10 * proj.scale; 
-            ctx.fillStyle = p.color;
-            ctx.fillRect(proj.x - width/2, proj.y, width, height);
-            ctx.fillStyle = 'rgba(0,0,0,0.3)';
-            ctx.fillRect(proj.x + width/6, proj.y, width/3, height);
-        }
-        else if (p.type === 'tree') {
-            ctx.fillStyle = p.color;
-            ctx.beginPath();
-            ctx.arc(proj.x, proj.y, p.size * proj.scale, 0, Math.PI * 2);
-            ctx.fill();
-        } 
-        else if (p.type === 'light') {
-            const blink = Math.sin(time * 4 + (p.blinkOffset || 0));
-            const alpha = 0.5 + 0.5 * Math.abs(blink);
-            ctx.shadowBlur = 15 * alpha;
-            ctx.shadowColor = p.color;
-            ctx.globalAlpha = alpha;
-            ctx.fillStyle = p.color;
-            ctx.beginPath();
-            ctx.arc(proj.x, proj.y, p.size * proj.scale, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-            ctx.globalAlpha = 1;
-        }
-        else if (p.type === 'ornament') {
-            ctx.fillStyle = p.color;
-            ctx.beginPath();
-            ctx.arc(proj.x, proj.y, p.size * proj.scale, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = 'rgba(255,255,255,0.6)';
-            ctx.beginPath();
-            ctx.arc(proj.x - p.size*0.3*proj.scale, proj.y - p.size*0.3*proj.scale, p.size * 0.3 * proj.scale, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        else if (p.type === 'bayinqiao') {
-            // Draw enhanced Ba Yin Qiao asset (Static)
-            drawBaYinQiao(ctx, proj.x, proj.y, p.size * proj.scale, time, p.rotationPhase || 0);
-        }
-        else if (p.type === 'star') {
-          const pulse = 1 + Math.sin(time * 3) * 0.1;
-          const outerRadius = p.size * proj.scale * pulse;
-          const innerRadius = outerRadius * 0.4;
-          
-          ctx.shadowBlur = 50;
-          ctx.shadowColor = '#ffff00';
-          ctx.fillStyle = 'rgba(255, 220, 100, 0.2)';
-          ctx.beginPath();
-          ctx.arc(proj.x, proj.y, outerRadius * 1.5, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.shadowBlur = 20;
-          ctx.fillStyle = STAR_COLOR;
-          
-          const spikes = 5;
-          let rot = Math.PI / 2 * 3;
-          let cx = proj.x;
-          let cy = proj.y;
-          let step = Math.PI / spikes;
-
-          ctx.beginPath();
-          ctx.moveTo(cx, cy - outerRadius);
-          for (let i = 0; i < spikes; i++) {
-            cx = proj.x + Math.cos(rot) * outerRadius;
-            cy = proj.y + Math.sin(rot) * outerRadius;
-            ctx.lineTo(cx, cy);
-            rot += step;
-
-            cx = proj.x + Math.cos(rot) * innerRadius;
-            cy = proj.y + Math.sin(rot) * innerRadius;
-            ctx.lineTo(cx, cy);
-            rot += step;
-          }
-          ctx.lineTo(proj.x, proj.y - outerRadius);
-          ctx.closePath();
-          ctx.fill();
-          
-          ctx.shadowBlur = 0;
-        }
-        else if (p.type === 'gift') {
-          const size = p.size * proj.scale;
-          const halfSize = size / 2;
-          const bob = Math.sin(time * 2 + (p.angleOffset || 0)) * 5 * proj.scale;
-          const yPos = proj.y + bob;
-
-          ctx.shadowBlur = 10;
-          ctx.shadowColor = 'rgba(0,0,0,0.5)';
-          ctx.fillStyle = p.color;
-          ctx.fillRect(proj.x - halfSize, yPos - halfSize, size, size);
-          
-          ctx.fillStyle = 'rgba(0,0,0,0.1)';
-          ctx.fillRect(proj.x - halfSize, yPos + halfSize - size * 0.1, size, size * 0.1);
-
-          ctx.fillStyle = '#ffffff';
-          const ribbonWidth = size * 0.25;
-          ctx.fillRect(proj.x - ribbonWidth/2, yPos - halfSize, ribbonWidth, size);
-          ctx.fillRect(proj.x - halfSize, yPos - ribbonWidth/2, size, ribbonWidth);
-          
-          ctx.shadowBlur = 5;
-          ctx.shadowColor = '#ffffff';
-          ctx.beginPath();
-          ctx.ellipse(proj.x - ribbonWidth, yPos - halfSize, ribbonWidth, ribbonWidth*0.8, -0.5, 0, Math.PI * 2);
-          ctx.ellipse(proj.x + ribbonWidth, yPos - halfSize, ribbonWidth, ribbonWidth*0.8, 0.5, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.shadowBlur = 0;
-        } 
-        else if (p.type === 'snow') {
-          ctx.fillStyle = p.color;
-          ctx.beginPath();
-          ctx.arc(proj.x, proj.y, p.size * proj.scale, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        
-        ctx.globalAlpha = 1;
-      }
-    });
-
-    requestRef.current = requestAnimationFrame(animate);
-  }, [project]);
-
-  // Handle Canvas Click
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
-
-    const time = Date.now() * 0.001;
-    const currentRotation = time * 0.25;
-
-    for (let i = particlesRef.current.length - 1; i >= 0; i--) {
-      const p = particlesRef.current[i];
-      
-      // Check for Gift clicks
-      if (p.type === 'gift' && p.giftId) {
-        const proj = project(p, canvas.width, canvas.height, currentRotation);
-        const bob = Math.sin(time * 2 + (p.angleOffset || 0)) * 5 * proj.scale;
-        const yPos = proj.y + bob;
-        const size = p.size * proj.scale;
-        const hitRadius = size * 0.8;
-        
-        const dx = clickX - proj.x;
-        const dy = clickY - yPos;
-        
-        if (Math.abs(dx) < hitRadius && Math.abs(dy) < hitRadius) {
-          const gift = GIFTS.find(g => g.id === p.giftId);
-          if (gift) {
-            onGiftClick(gift);
-            return; 
-          }
-        }
-      }
-      
-      // Check for Ba Yin Qiao clicks
-      if (p.type === 'bayinqiao') {
-          const proj = project(p, canvas.width, canvas.height, currentRotation);
-          const size = p.size * proj.scale;
-          const dx = clickX - proj.x;
-          const dy = clickY - proj.y;
-          // Simple visual feedback for now in console
-          if (dx*dx + dy*dy < size*size) {
-              console.log("Touched Ba Yin Qiao");
-          }
-      }
+  useFrame((state) => {
+    if (materialRef.current) {
+      materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+      const targetMix = isExploded ? 0 : 1;
+      materialRef.current.uniforms.uMix.value = THREE.MathUtils.lerp(
+        materialRef.current.uniforms.uMix.value,
+        targetMix,
+        0.02
+      );
     }
-  };
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const handleResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      initParticles();
-    };
-
-    window.addEventListener('resize', handleResize);
-    handleResize();
-
-    requestRef.current = requestAnimationFrame(animate);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      cancelAnimationFrame(requestRef.current);
-    };
-  }, [initParticles, animate]);
+  });
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="absolute top-0 left-0 w-full h-full cursor-pointer touch-none"
-      onClick={handleCanvasClick}
-      style={{ touchAction: 'none' }} 
-    />
+    <points>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={positions.length / 3} array={positions} itemSize={3} />
+        <bufferAttribute attach="attributes-aChaosPos" count={chaosPositions.length / 3} array={chaosPositions} itemSize={3} />
+      </bufferGeometry>
+      {/* @ts-ignore */}
+      <foliageMaterial 
+        ref={materialRef} 
+        transparent 
+        depthWrite={false} 
+        blending={THREE.AdditiveBlending}
+        uColorBase={new THREE.Color(TREE_COLOR_BASE)}
+        uColorTip={new THREE.Color(TREE_COLOR_TIP)}
+      />
+    </points>
+  );
+};
+
+const Snow = () => {
+    const count = 500; 
+    const ref = useRef<THREE.Points>(null);
+    const materialRef = useRef<THREE.ShaderMaterial>(null);
+
+    const { positions } = useMemo(() => {
+        const pos = new Float32Array(count * 3);
+        for(let i=0; i<count; i++) {
+            pos[i*3] = (Math.random() - 0.5) * 60;
+            pos[i*3+1] = (Math.random() - 0.5) * 60;
+            pos[i*3+2] = (Math.random() - 0.5) * 60;
+        }
+        return { positions: pos };
+    }, []);
+
+    useFrame((state, delta) => {
+        if (materialRef.current) {
+             materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+        }
+        if(!ref.current) return;
+        
+        const positions = ref.current.geometry.attributes.position.array as Float32Array;
+        for(let i=1; i<positions.length; i+=3) {
+            positions[i] -= delta * 3; 
+            if(positions[i] < -30) positions[i] = 30;
+        }
+        ref.current.geometry.attributes.position.needsUpdate = true;
+    });
+
+    return (
+        <points ref={ref}>
+            <bufferGeometry>
+                <bufferAttribute attach="attributes-position" count={positions.length / 3} array={positions} itemSize={3} />
+            </bufferGeometry>
+            {/* @ts-ignore */}
+            <snowflakeMaterial 
+                ref={materialRef}
+                transparent 
+                depthWrite={false} 
+                blending={THREE.AdditiveBlending} 
+            />
+        </points>
+    )
+}
+
+// Mystical Orb Component (Ba Yin Qiao)
+// Updated to feature White Jade outer shell + Purple Inner Core
+const MysticalOrb = ({ position, scale = 1, speed = 1 }: { position: THREE.Vector3, scale?: number, speed?: number }) => {
+    const ref = useRef<THREE.Group>(null);
+    const materialRef = useRef<THREE.ShaderMaterial>(null);
+
+    useFrame((state, delta) => {
+        if (!ref.current || !materialRef.current) return;
+        
+        // Slow rotation
+        ref.current.rotation.x += delta * 0.2 * speed;
+        ref.current.rotation.y += delta * 0.3 * speed;
+        
+        // Bobbing
+        ref.current.position.y += Math.sin(state.clock.elapsedTime * speed + position.x) * 0.005;
+
+        materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    });
+
+    return (
+        <group ref={ref} position={position} scale={scale}>
+            {/* Outer Shell: White Jade with Cloud Patterns & Holes */}
+            <mesh>
+                <sphereGeometry args={[1, 64, 64]} />
+                {/* @ts-ignore */}
+                <orbMaterial 
+                    ref={materialRef} 
+                    side={THREE.DoubleSide} 
+                />
+            </mesh>
+            
+            {/* Inner Core: Solid Purple Sphere */}
+            <mesh scale={0.7}>
+                <sphereGeometry args={[1, 32, 32]} />
+                <meshStandardMaterial 
+                    color="#6d28d9" 
+                    emissive="#4c1d95"
+                    emissiveIntensity={1.5}
+                    roughness={0.4}
+                    metalness={0.5}
+                />
+            </mesh>
+            {/* Core Lights to make it glow from inside */}
+            <pointLight color="#a855f7" intensity={1} distance={2.5} decay={2} />
+        </group>
+    );
+};
+
+// Collection of Orbs orbiting the tree
+const MysticalOrbs = ({ isExploded }: { isExploded: boolean }) => {
+    const count = 8; // Eight tones -> Eight orbs
+    const orbs = useMemo(() => {
+        return new Array(count).fill(0).map((_, i) => {
+            const angle = (i / count) * Math.PI * 2;
+            const r = 10 + Math.random() * 4;
+            const y = (Math.random() - 0.5) * 16;
+            return {
+                pos: new THREE.Vector3(r * Math.cos(angle), y, r * Math.sin(angle)),
+                scale: 0.8 + Math.random() * 0.6,
+                speed: 0.5 + Math.random() * 0.5
+            };
+        });
+    }, []);
+
+    return (
+        <group>
+            {orbs.map((orb, i) => (
+                <Float key={i} speed={orb.speed} rotationIntensity={0.5} floatIntensity={1}>
+                     <MysticalOrb 
+                        position={isExploded ? orb.pos.clone().multiplyScalar(2) : orb.pos} 
+                        scale={orb.scale}
+                        speed={orb.speed}
+                     />
+                </Float>
+            ))}
+        </group>
+    );
+}
+
+const Ornaments = ({ isExploded }: { isExploded: boolean }) => {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const count = 350;
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  const { targetData, chaosData, colors } = useMemo(() => {
+    const tData = [];
+    const cData = [];
+    const cols = new Float32Array(count * 3);
+    const colorObj = new THREE.Color();
+
+    for (let i = 0; i < count; i++) {
+      const hNorm = Math.random(); 
+      const y = hNorm * 18 - 9;
+      const r = (1 - hNorm) * 8.8; 
+      const theta = y * 2.5 + Math.random() * Math.PI * 2; 
+      
+      tData.push({ x: r * Math.cos(theta), y, z: r * Math.sin(theta) });
+
+      const thetaS = Math.random() * Math.PI * 2;
+      const phiS = Math.acos(2 * Math.random() - 1);
+      const radS = 45 + Math.random() * 10;
+      cData.push({
+        x: radS * Math.sin(phiS) * Math.cos(thetaS),
+        y: radS * Math.sin(phiS) * Math.sin(thetaS),
+        z: radS * Math.cos(phiS)
+      });
+
+      colorObj.set(LIGHT_COLORS[Math.floor(Math.random() * LIGHT_COLORS.length)]);
+      // Boost intensity for bloom
+      colorObj.multiplyScalar(1.5);
+      colorObj.toArray(cols, i * 3);
+    }
+    return { targetData: tData, chaosData: cData, colors: cols };
+  }, []);
+
+  useFrame(() => {
+    if (!meshRef.current) return;
+    const targetMix = isExploded ? 0 : 1;
+    if (meshRef.current.userData.mix === undefined) meshRef.current.userData.mix = 0;
+    
+    meshRef.current.userData.mix = THREE.MathUtils.lerp(
+      meshRef.current.userData.mix,
+      targetMix,
+      0.03
+    );
+    
+    const m = meshRef.current.userData.mix;
+    const ease = m * m * (3 - 2 * m);
+
+    for (let i = 0; i < count; i++) {
+        const chaos = chaosData[i];
+        const target = targetData[i];
+        
+        const x = THREE.MathUtils.lerp(chaos.x, target.x, ease);
+        const y = THREE.MathUtils.lerp(chaos.y, target.y, ease);
+        const z = THREE.MathUtils.lerp(chaos.z, target.z, ease);
+        
+        dummy.position.set(x, y, z);
+        const scale = 0.25 * (0.2 + 0.8 * ease); 
+        dummy.scale.set(scale, scale, scale);
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <sphereGeometry args={[1, 16, 16]} />
+      <meshStandardMaterial 
+        toneMapped={false}
+        roughness={0.2}
+        metalness={1.0}
+        emissiveIntensity={1}
+      />
+      <instancedBufferAttribute attach="instanceColor" args={[colors, 3]} />
+    </instancedMesh>
+  );
+};
+
+const InteractiveGift = ({ 
+    gift, index, total, onClick, isExploded 
+}: { 
+    gift: GiftMessage, index: number, total: number, onClick: (g: GiftMessage) => void, isExploded: boolean
+}) => {
+    const [hovered, setHover] = useState(false);
+    useCursor(hovered);
+    
+    const { targetPos, chaosPos } = useMemo(() => {
+        const hNorm = 0.15 + (index / total) * 0.65;
+        const y = hNorm * 16 - 8;
+        const r = (1 - hNorm) * 9.5 + 1.0;
+        const theta = (index / total) * Math.PI * 2 * 3.5;
+        return { 
+            targetPos: new THREE.Vector3(r * Math.cos(theta), y, r * Math.sin(theta)), 
+            chaosPos: new THREE.Vector3((Math.random()-0.5)*80, (Math.random()-0.5)*80, (Math.random()-0.5)*80) 
+        };
+    }, [index, total]);
+
+    const ref = useRef<THREE.Group>(null);
+    const mixRef = useRef(0);
+
+    useFrame((state, delta) => {
+        if (!ref.current) return;
+        const targetMix = isExploded ? 0 : 1;
+        mixRef.current = THREE.MathUtils.lerp(mixRef.current, targetMix, delta * 1.5);
+        
+        ref.current.position.lerpVectors(chaosPos, targetPos, mixRef.current);
+        
+        if (mixRef.current > 0.9) {
+           const time = state.clock.elapsedTime;
+           // Floating animation
+           ref.current.position.y += Math.sin(time * 2 + index) * 0.005;
+           // Gentle rotation
+           ref.current.rotation.y = Math.sin(time * 0.5 + index) * 0.2;
+           ref.current.rotation.z = Math.sin(time * 0.3 + index) * 0.1;
+           
+           if(hovered) {
+               ref.current.scale.lerp(new THREE.Vector3(1.2, 1.2, 1.2), delta * 10);
+           } else {
+               ref.current.scale.lerp(new THREE.Vector3(1, 1, 1), delta * 5);
+           }
+        } else {
+           ref.current.rotation.x += delta;
+           ref.current.rotation.z += delta;
+        }
+    });
+
+    return (
+        <group ref={ref} onClick={(e) => { e.stopPropagation(); onClick(gift); }} onPointerOver={() => setHover(true)} onPointerOut={() => setHover(false)}>
+            {/* Glowing core when hovered */}
+            <pointLight distance={3} intensity={hovered ? 5 : 0} color={gift.color} decay={2} />
+            
+            <mesh castShadow receiveShadow>
+                <boxGeometry args={[1.2, 1.2, 1.2]} />
+                <meshStandardMaterial 
+                    color={gift.color} 
+                    metalness={0.5} 
+                    roughness={0.2}
+                    emissive={gift.color}
+                    emissiveIntensity={hovered ? 0.5 : 0}
+                />
+            </mesh>
+            {/* Ribbons */}
+            <mesh scale={[1.05, 1.05, 0.25]}>
+                <boxGeometry args={[1.2, 1.2, 1.2]} />
+                <meshStandardMaterial color={GOLD_COLOR} metalness={1} roughness={0.1} />
+            </mesh>
+            <mesh scale={[0.25, 1.05, 1.05]}>
+                <boxGeometry args={[1.2, 1.2, 1.2]} />
+                <meshStandardMaterial color={GOLD_COLOR} metalness={1} roughness={0.1} />
+            </mesh>
+        </group>
+    );
+};
+
+// A Merkaba-style 3D Star
+const StarTopper = ({ isExploded }: { isExploded: boolean }) => {
+    const ref = useRef<THREE.Group>(null);
+    const mixRef = useRef(0);
+    const targetPos = new THREE.Vector3(0, 10.8, 0);
+    const chaosPos = new THREE.Vector3(0, 60, 0);
+
+    useFrame((state, delta) => {
+        if (!ref.current) return;
+        const targetMix = isExploded ? 0 : 1;
+        mixRef.current = THREE.MathUtils.lerp(mixRef.current, targetMix, delta * 0.8);
+        ref.current.position.lerpVectors(chaosPos, targetPos, mixRef.current);
+        
+        // Spin
+        ref.current.rotation.y += delta * 0.5;
+        ref.current.rotation.z = Math.sin(state.clock.elapsedTime) * 0.1;
+    });
+
+    return (
+        <group ref={ref}>
+            <Float speed={2} rotationIntensity={0.5} floatIntensity={0.5}>
+                <group scale={1.5}>
+                     {/* Tetrahedron 1 */}
+                    <mesh>
+                        <octahedronGeometry args={[1.2, 0]} />
+                        <meshStandardMaterial color={GOLD_COLOR} emissive={GOLD_COLOR} emissiveIntensity={2} toneMapped={false} />
+                    </mesh>
+                    {/* Tetrahedron 2 (Inverted) */}
+                    <mesh rotation={[0, 0, Math.PI / 4]} scale={0.8}>
+                        <octahedronGeometry args={[1.2, 0]} />
+                        <meshStandardMaterial color="#FFF" emissive="#FFF" emissiveIntensity={1} toneMapped={false} transparent opacity={0.8} />
+                    </mesh>
+                </group>
+            </Float>
+            <pointLight color={GOLD_COLOR} intensity={3} distance={15} decay={2} />
+            {/* Halo Effect */}
+            <Sparkles count={50} scale={4} size={6} speed={0.4} opacity={1} color="#FFF" />
+        </group>
+    );
+}
+
+// --- Main Scene ---
+interface TreeCanvasProps {
+  onGiftClick: (gift: GiftMessage) => void;
+  isExploded: boolean;
+}
+
+const TreeCanvas: React.FC<TreeCanvasProps> = ({ onGiftClick, isExploded }) => {
+  return (
+    <Canvas
+      dpr={[1, 2]}
+      gl={{ antialias: false, alpha: false, toneMapping: THREE.ReinhardToneMapping, toneMappingExposure: 1.2 }}
+      camera={{ position: [0, 2, 28], fov: 45 }}
+    >
+      <color attach="background" args={['#000500']} />
+      
+      {/* Lighting */}
+      <ambientLight intensity={0.1} />
+      <spotLight position={[20, 30, 20]} angle={0.25} penumbra={1} intensity={300} color="#ffeedd" castShadow />
+      <pointLight position={[-10, 5, -10]} intensity={50} color="#00ff00" />
+      <pointLight position={[10, -5, 10]} intensity={50} color="#ff0000" />
+
+      <Environment preset="night" background={false} blur={0.8} />
+
+      <group position={[0, -6, 0]}>
+        <Snow />
+        <MysticalOrbs isExploded={isExploded} />
+        <Foliage isExploded={isExploded} />
+        <Ornaments isExploded={isExploded} />
+        <StarTopper isExploded={isExploded} />
+        {/* Removed WindingKey */}
+        
+        {GIFTS.map((gift, i) => (
+            <InteractiveGift 
+                key={gift.id} 
+                gift={gift} 
+                index={i} 
+                total={GIFTS.length} 
+                onClick={onGiftClick}
+                isExploded={isExploded}
+            />
+        ))}
+      </group>
+
+      {/* Background Magic */}
+      <Sparkles count={300} scale={[25, 25, 25]} size={3} speed={0.2} opacity={0.4} color={GOLD_COLOR} />
+      
+      <EffectComposer enableNormalPass={false}>
+        <Bloom luminanceThreshold={0.9} mipmapBlur intensity={2.0} radius={0.5} />
+        <Vignette eskil={false} offset={0.1} darkness={0.6} />
+      </EffectComposer>
+
+      <OrbitControls 
+        enablePan={false} 
+        minPolarAngle={Math.PI / 3} 
+        maxPolarAngle={Math.PI / 1.8}
+        minDistance={15}
+        maxDistance={40}
+        autoRotate
+        autoRotateSpeed={0.8}
+      />
+    </Canvas>
   );
 };
 

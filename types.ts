@@ -1,4 +1,3 @@
-
 export interface GiftMessage {
   id: string;
   to: string;
@@ -6,28 +5,43 @@ export interface GiftMessage {
   color: string;
 }
 
-export interface Point3D {
-  x: number;
-  y: number;
-  z: number;
+// Props for the main scene
+export interface TreeSceneProps {
+  onGiftClick: (gift: GiftMessage) => void;
+  isExploded: boolean;
 }
 
-export interface Particle extends Point3D {
-  size: number;
-  color: string;
-  type: 'tree' | 'trunk' | 'snow' | 'gift' | 'star' | 'light' | 'ornament' | 'bayinqiao';
-  giftId?: string; // Only for gift particles
-  originalY?: number; // For tree spiral calculation
-  angleOffset?: number; // For tree spiral calculation
-  speed?: number; // For snow
-  opacity: number;
-  blinkOffset?: number; // For lights
-  rotationPhase?: number; // For bayinqiao rotation
-}
+// Fix for missing JSX Intrinsic Elements definitions
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      // HTML Elements
+      div: any;
+      span: any;
+      h1: any;
+      h2: any;
+      h3: any;
+      p: any;
+      button: any;
+      br: any;
 
-export interface ProjectedPoint {
-  x: number;
-  y: number;
-  scale: number;
-  visible: boolean;
+      // React Three Fiber Elements
+      points: any;
+      bufferGeometry: any;
+      bufferAttribute: any;
+      instancedMesh: any;
+      sphereGeometry: any;
+      meshStandardMaterial: any;
+      instancedBufferAttribute: any;
+      group: any;
+      mesh: any;
+      boxGeometry: any;
+      octahedronGeometry: any;
+      pointLight: any;
+      ambientLight: any;
+      spotLight: any;
+      color: any;
+      planeGeometry: any;
+    }
+  }
 }
